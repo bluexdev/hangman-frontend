@@ -1,13 +1,13 @@
 "use client" // This page needs to be a client component to use useState for the modal
 
-import { useState } from "react"
+import React, { useState, useEffect } from "react" // Import React and useEffect
 import { getRoomDetails, leaveRoom } from "@/app/actions"
 import { HangmanGame } from "@/components/hangman-game"
 import { Chat } from "@/components/chat"
 import { Card, CardContent, CardTitle } from "@/components/ui/card"
 import { ModeToggle } from "@/components/mode-toggle"
 import { Button } from "@/components/ui/button"
-import { Copy, LogOut } from "lucide-react"
+import { Copy, LogOut, Loader2 } from "lucide-react" // Import Loader2 for spinner
 import { ShareRoomLinkButton } from "@/components/share-room-link-button"
 import { useToast } from "@/components/ui/use-toast"
 import {
@@ -20,30 +20,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { useEffect } from "react" // Import useEffect for initial data fetching
 
 interface RoomPageProps {
-  params: {
+  params: Promise<{
     id: string
-  }
+  }> // params is now a Promise
 }
 
-// This component will fetch data on the client side after initial render
-// to allow for the AlertDialog state management.
-// For a full server-side approach with modals, you'd typically use a separate client component for the modal trigger.
-// Given the complexity of the page and the need for client-side state for the modal,
-// making the whole page a client component simplifies state management for this specific request.
 export default function RoomPage({ params }: RoomPageProps) {
-  const { id: roomId } = params
+  // Unwrap params using React.use()
+  const { id: roomId } = React.use(params)
   const { toast } = useToast()
 
   const [roomDetails, setRoomDetails] = useState<any>(null)
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true) // New loading state
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
 
   useEffect(() => {
     const fetchInitialData = async () => {
+      setIsLoading(true) // Start loading
       const { room, currentUser: user, error } = await getRoomDetails(roomId)
       if (error) {
         setFetchError(error)
@@ -51,9 +48,25 @@ export default function RoomPage({ params }: RoomPageProps) {
         setRoomDetails(room)
         setCurrentUser(user)
       }
+      setIsLoading(false) // End loading
     }
     fetchInitialData()
   }, [roomId])
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4 bg-background text-foreground">
+        <Card className="card-base-style p-6 sm:p-8 text-center">
+          <CardTitle className="text-3xl sm:text-4xl mb-4 flex items-center justify-center gap-2">
+            <Loader2 className="h-8 w-8 animate-spin" /> Cargando Sala...
+          </CardTitle>
+          <CardContent className="text-base sm:text-lg">
+            <p>Por favor, espera mientras preparamos la partida.</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   if (fetchError) {
     return (
@@ -72,6 +85,7 @@ export default function RoomPage({ params }: RoomPageProps) {
   }
 
   if (!roomDetails || !currentUser) {
+    // This case should ideally not be hit if isLoading and fetchError are handled
     return (
       <div className="flex min-h-screen items-center justify-center p-4 bg-background text-foreground">
         <Card className="card-base-style p-6 sm:p-8 text-center">

@@ -6,12 +6,13 @@ import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { setWord, sendMove } from "@/app/actions"
+import { setWord, sendMove, resetGame, switchWordSetter } from "@/app/actions" // Import switchWordSetter
 import { useToast } from "@/components/ui/use-toast"
 import { createBrowserClient } from "@/lib/supabase"
 import { HangmanDrawing } from "./hangman-drawing"
 import { VirtualKeyboard } from "./virtual-keyboard"
-import { motion } from "framer-motion" // Import framer-motion
+import { motion } from "framer-motion"
+import { RefreshCw } from "lucide-react" // Import RefreshCw icon
 
 interface HangmanGameProps {
   roomId: string
@@ -35,7 +36,10 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
 
   const isHost = room.host_user_id === currentUser.id
   const isGuest = room.guest_user_id === currentUser.id
-  const isMyTurn = room.current_turn_user_id === currentUser.id && room.state === "playing"
+  // isMyTurn now means "it's my turn to be the guesser for this round"
+  const isMyTurnToGuess = room.current_turn_user_id === currentUser.id && room.state === "playing"
+  const isMyTurnToSetWord =
+    room.current_turn_user_id !== currentUser.id && room.state === "waiting" && room.guest_user_id
 
   useEffect(() => {
     // Initialize game state from initial props
@@ -82,6 +86,17 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
             setGameStatus("playing")
             setGuessedLetters(new Set())
             setIncorrectGuesses(0)
+          } else if (!updatedRoom.word && wordToGuess) {
+            // Word was cleared, likely a game reset
+            setWordToGuess("")
+            setGameStatus("waiting")
+            setGuessedLetters(new Set())
+            setIncorrectGuesses(0)
+            toast({
+              title: "¡Nueva Ronda!",
+              description: `Es el turno de ${updatedRoom.current_turn_username} para adivinar.`,
+              variant: "default",
+            })
           }
           setGameStatus(updatedRoom.state)
 
@@ -143,9 +158,7 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
     }
   }, [guessedLetters, incorrectGuesses, wordToGuess, gameStatus, toast])
 
-  const displayWord = wordToGuess
-    .split("")
-    .map((char) => (guessedLetters.has(char) ? char : "_"))
+  const displayWord = wordToGuess.split("").map((char) => (guessedLetters.has(char) ? char : "_"))
 
   const handleSetWord = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -158,11 +171,12 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
       toast({ title: "Error", description: result.error, variant: "destructive" })
     } else {
       toast({ title: "Palabra establecida", description: "¡Que empiece el juego!", variant: "default" })
+      setHostWordInput("") // Clear the input after successful submission
     }
   }
 
   const handleGuess = async (letter: string) => {
-    if (gameStatus !== "playing" || guessedLetters.has(letter) || !isMyTurn) {
+    if (gameStatus !== "playing" || guessedLetters.has(letter) || !isMyTurnToGuess) {
       return
     }
 
@@ -170,6 +184,28 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
     const result = await sendMove(roomId, letter, correct)
     if (!result.success) {
       toast({ title: "Error", description: result.error, variant: "destructive" })
+    }
+  }
+
+  const handleResetGame = async () => {
+    const result = await resetGame(roomId)
+    if (!result.success) {
+      toast({ title: "Error al reiniciar juego", description: result.error, variant: "destructive" })
+    } else {
+      toast({ title: "Juego Reiniciado", description: "¡Preparando nueva ronda!", variant: "default" })
+    }
+  }
+
+  const handleSwitchWordSetter = async () => {
+    const result = await switchWordSetter(roomId)
+    if (!result.success) {
+      toast({ title: "Error al cambiar roles", description: result.error, variant: "destructive" })
+    } else {
+      toast({
+        title: "Roles Cambiados",
+        description: "¡Ahora el otro jugador establecerá la palabra!",
+        variant: "default",
+      })
     }
   }
 
@@ -181,46 +217,72 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
   }
 
   const renderGameArea = () => {
-    if (room.state === "waiting" && isHost) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full w-full p-4">
-          <h2 className="text-xl sm:text-2xl font-semibold mb-4 text-primary">Esperando al invitado...</h2>
-          <p className="text-base sm:text-lg text-foreground/80 mb-6 text-center">
-            Comparte el código de sala con tu pareja.
-          </p>
-          <form onSubmit={handleSetWord} className="space-y-4 w-full max-w-sm">
-            <div>
-              <Label htmlFor="word-input" className="text-base sm:text-lg font-medium text-primary">
-                Introduce la palabra secreta:
-              </Label>
-              <Input
-                id="word-input"
-                placeholder="Ej: AMOR"
-                value={hostWordInput}
-                onChange={(e) => setHostWordInput(e.target.value.toUpperCase())}
-                className="input-base-style mt-2 text-center text-xl sm:text-2xl tracking-widest"
-                maxLength={15}
-              />
-            </div>
-            <Button type="submit" className="w-full btn-primary-style">
-              Empezar Juego
-            </Button>
-          </form>
-        </div>
-      )
+    if (room.state === "waiting") {
+      if (!room.guest_user_id) {
+        // Waiting for guest to join
+        return (
+          <div className="flex flex-col items-center justify-center h-full w-full p-4">
+            <h2 className="text-xl sm:text-2xl font-semibold mb-4 text-primary">Esperando al invitado...</h2>
+            <p className="text-base sm:text-lg text-foreground/80 text-center">
+              Comparte el código de sala con tu pareja.
+            </p>
+          </div>
+        )
+      }
+
+      if (isMyTurnToSetWord) {
+        // Current user should set the word
+        return (
+          <div className="flex flex-col items-center justify-center h-full w-full p-4">
+            <h2 className="text-xl sm:text-2xl font-semibold mb-4 text-primary">Tu turno de establecer la palabra</h2>
+            <p className="text-base sm:text-lg text-foreground/80 mb-6 text-center">
+              {room.current_turn_username} adivinará tu palabra.
+            </p>
+            <form onSubmit={handleSetWord} className="space-y-4 w-full max-w-sm">
+              <div>
+                <Label htmlFor="word-input" className="text-base sm:text-lg font-medium text-primary">
+                  Introduce la palabra secreta:
+                </Label>
+                <Input
+                  id="word-input"
+                  placeholder="Ej: AMOR"
+                  value={hostWordInput}
+                  onChange={(e) => setHostWordInput(e.target.value.toUpperCase())}
+                  className="input-base-style mt-2 text-center text-xl sm:text-2xl tracking-widest"
+                  maxLength={15}
+                />
+              </div>
+              <Button type="submit" className="w-full btn-primary-style">
+                Empezar Juego
+              </Button>
+            </form>
+            {isHost && (
+              <Button
+                onClick={handleSwitchWordSetter}
+                variant="outline"
+                className="mt-4 flex items-center gap-2 bg-transparent"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Que {room.guest_username} establezca la palabra
+              </Button>
+            )}
+          </div>
+        )
+      } else {
+        // Other user should set the word
+        return (
+          <div className="flex flex-col items-center justify-center h-full w-full p-4">
+            <h2 className="text-xl sm:text-2xl font-semibold mb-4 text-primary">
+              Esperando que {room.current_turn_user_id === room.host_user_id ? room.guest_username : room.host_username}{" "}
+              elija la palabra...
+            </h2>
+            <p className="text-base sm:text-lg text-foreground/80 text-center">¡Prepárate para adivinar!</p>
+          </div>
+        )
+      }
     }
 
-    if (room.state === "waiting" && isGuest) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full w-full p-4">
-          <h2 className="text-xl sm:text-2xl font-semibold mb-4 text-primary">
-            Esperando que el anfitrión elija la palabra...
-          </h2>
-          <p className="text-base sm:text-lg text-foreground/80 text-center">¡Prepárate para adivinar!</p>
-        </div>
-      )
-    }
-
+    // Game is playing or finished
     return (
       <div className="flex flex-col items-center justify-between h-full w-full p-4">
         <div className="text-center mb-6 sm:mb-8">
@@ -240,9 +302,9 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
           <p className="text-lg sm:text-xl text-foreground/80">
             Intentos restantes: {MAX_INCORRECT_GUESSES - incorrectGuesses}
           </p>
-          {room.state === "playing" && (
+          {gameStatus === "playing" && (
             <p className="text-lg sm:text-xl font-semibold mt-2 text-secondary">
-              {isMyTurn ? "¡Es tu turno!" : `Turno de ${room.current_turn_username}`}
+              {isMyTurnToGuess ? "¡Es tu turno de adivinar!" : `Turno de ${room.current_turn_username} para adivinar`}
             </p>
           )}
           {gameStatus === "won" && (
@@ -261,12 +323,12 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
           <VirtualKeyboard
             onKeyPress={handleGuess}
             getStatus={getKeyboardStatus}
-            disabled={!isMyTurn || gameStatus !== "playing"}
+            disabled={!isMyTurnToGuess || gameStatus !== "playing"}
           />
         </div>
 
-        {gameStatus !== "playing" && (
-          <Button onClick={() => window.location.reload()} className="mt-6 sm:mt-8 btn-primary-style">
+        {(gameStatus === "won" || gameStatus === "lost") && (
+          <Button onClick={handleResetGame} className="mt-6 sm:mt-8 btn-primary-style">
             Volver a Jugar
           </Button>
         )}

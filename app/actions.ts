@@ -5,7 +5,7 @@ import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 
 export async function createUser(username: string) {
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const supabase = createServerClient()
 
   const { data: existingUser, error: userError } = await supabase
@@ -41,7 +41,7 @@ export async function createUser(username: string) {
 }
 
 export async function createRoom(username: string) {
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const supabase = createServerClient()
 
   const { success, userId, error: userCreationError } = await createUser(username)
@@ -64,7 +64,7 @@ export async function createRoom(username: string) {
 }
 
 export async function joinRoom(roomId: string, username: string) {
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const supabase = createServerClient()
 
   const { success, userId, error: userCreationError } = await createUser(username)
@@ -93,7 +93,10 @@ export async function joinRoom(roomId: string, username: string) {
   }
 
   // Set guest_user_id and also set initial turn to guest
-  const { error } = await supabase.from("rooms").update({ guest_user_id: userId, current_turn_user_id: userId }).eq("id", roomId)
+  const { error } = await supabase
+    .from("rooms")
+    .update({ guest_user_id: userId, current_turn_user_id: userId })
+    .eq("id", roomId)
 
   if (error) {
     console.error("Error joining room:", error)
@@ -105,7 +108,7 @@ export async function joinRoom(roomId: string, username: string) {
 
 export async function getRoomDetails(roomId: string) {
   const supabase = createServerClient()
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const userId = cookieStore.get("user_id")?.value
   const username = cookieStore.get("username")?.value
 
@@ -150,21 +153,30 @@ export async function getRoomDetails(roomId: string) {
 
 export async function setWord(roomId: string, word: string) {
   const supabase = createServerClient()
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const userId = cookieStore.get("user_id")?.value
 
   if (!userId) {
     return { success: false, error: "User not logged in." }
   }
 
-  const { data: room, error: roomError } = await supabase.from("rooms").select("host_user_id, guest_user_id").eq("id", roomId).single()
+  const { data: room, error: roomError } = await supabase
+    .from("rooms")
+    .select("host_user_id, guest_user_id, current_turn_user_id")
+    .eq("id", roomId)
+    .single()
 
-  if (roomError || !room || room.host_user_id !== userId) {
-    return { success: false, error: "Only the host can set the word." }
+  if (roomError || !room) {
+    return { success: false, error: "Room not found." }
   }
 
-  // Set initial turn to guest when word is set
-  const { error } = await supabase.from("rooms").update({ word: word.toUpperCase(), state: "playing", current_turn_user_id: room.guest_user_id }).eq("id", roomId)
+  // Only the person who is NOT the current guesser can set the word
+  if (room.current_turn_user_id === userId) {
+    return { success: false, error: "You cannot set the word when it's your turn to guess." }
+  }
+
+  // Set the word and start playing
+  const { error } = await supabase.from("rooms").update({ word: word.toUpperCase(), state: "playing" }).eq("id", roomId)
 
   if (error) {
     console.error("Error setting word:", error)
@@ -176,42 +188,40 @@ export async function setWord(roomId: string, word: string) {
 
 export async function sendMove(roomId: string, letter: string, correct: boolean) {
   const supabase = createServerClient()
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const userId = cookieStore.get("user_id")?.value
 
   if (!userId) {
     return { success: false, error: "User not logged in." }
   }
 
-  const { data: room, error: roomError } = await supabase.from("rooms").select("host_user_id, guest_user_id, current_turn_user_id").eq("id", roomId).single()
+  const { data: room, error: roomError } = await supabase
+    .from("rooms")
+    .select("host_user_id, guest_user_id, current_turn_user_id")
+    .eq("id", roomId)
+    .single()
 
   if (roomError || !room || room.current_turn_user_id !== userId) {
+    // Only the designated guesser can make a move
     return { success: false, error: "It's not your turn." }
   }
 
-  const { error: moveError } = await supabase.from("moves").insert({ room_id: roomId, user_id: userId, letter, correct })
+  const { error: moveError } = await supabase
+    .from("moves")
+    .insert({ room_id: roomId, user_id: userId, letter, correct })
 
   if (moveError) {
     console.error("Error sending move:", moveError)
     return { success: false, error: moveError.message }
   }
 
-  // If incorrect guess, switch turn
-  if (!correct) {
-    const nextTurnUserId = userId === room.host_user_id ? room.guest_user_id : room.host_user_id
-    const { error: turnError } = await supabase.from("rooms").update({ current_turn_user_id: nextTurnUserId }).eq("id", roomId)
-    if (turnError) {
-      console.error("Error switching turn:", turnError)
-      return { success: false, error: turnError.message }
-    }
-  }
-
+  // Turn does NOT switch after each letter. It only switches on game reset.
   return { success: true }
 }
 
 export async function sendMessage(roomId: string, message: string) {
   const supabase = createServerClient()
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const userId = cookieStore.get("user_id")?.value
   const username = cookieStore.get("username")?.value
 
@@ -224,6 +234,39 @@ export async function sendMessage(roomId: string, message: string) {
   if (error) {
     console.error("Error sending message:", error)
     return { success: false, error: error.message }
+  }
+
+  return { success: true }
+}
+
+export async function setTypingIndicator(roomId: string, isTyping: boolean) {
+  const supabase = createServerClient()
+  const cookieStore = await cookies()
+  const userId = cookieStore.get("user_id")?.value
+  const username = cookieStore.get("username")?.value
+
+  if (!userId || !username) {
+    return { success: false, error: "User not logged in or username not found." }
+  }
+
+  if (isTyping) {
+    // Insert or update typing indicator
+    const { error } = await supabase
+      .from("typing_indicators")
+      .upsert({ room_id: roomId, user_id: userId, username, is_typing: true, updated_at: new Date().toISOString() })
+
+    if (error) {
+      console.error("Error setting typing indicator:", error)
+      return { success: false, error: error.message }
+    }
+  } else {
+    // Remove typing indicator
+    const { error } = await supabase.from("typing_indicators").delete().eq("room_id", roomId).eq("user_id", userId)
+
+    if (error) {
+      console.error("Error removing typing indicator:", error)
+      return { success: false, error: error.message }
+    }
   }
 
   return { success: true }
@@ -263,7 +306,7 @@ export async function getInitialMoves(roomId: string) {
 
 export async function leaveRoom(roomId: string) {
   const supabase = createServerClient()
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const userId = cookieStore.get("user_id")?.value
 
   if (!userId) {
@@ -278,14 +321,20 @@ export async function leaveRoom(roomId: string) {
 
   if (room.host_user_id === userId) {
     // Host is leaving, close the room
-    const { error } = await supabase.from("rooms").update({ state: "finished", guest_user_id: null, word: null, current_turn_user_id: null }).eq("id", roomId)
+    const { error } = await supabase
+      .from("rooms")
+      .update({ state: "finished", guest_user_id: null, word: null, current_turn_user_id: null })
+      .eq("id", roomId)
     if (error) {
       console.error("Error closing room:", error)
       return { success: false, error: error.message }
     }
   } else {
     // Guest is leaving
-    const { error } = await supabase.from("rooms").update({ guest_user_id: null, current_turn_user_id: room.host_user_id }).eq("id", roomId) // Host gets turn back
+    const { error } = await supabase
+      .from("rooms")
+      .update({ guest_user_id: null, current_turn_user_id: room.host_user_id })
+      .eq("id", roomId) // Host gets turn back
     if (error) {
       console.error("Error leaving room:", error)
       return { success: false, error: error.message }
@@ -293,4 +342,104 @@ export async function leaveRoom(roomId: string) {
   }
 
   redirect("/") // Redirect both host and guest to home page
+}
+
+export async function resetGame(roomId: string) {
+  const supabase = createServerClient()
+  const cookieStore = await cookies()
+  const userId = cookieStore.get("user_id")?.value
+
+  if (!userId) {
+    return { success: false, error: "User not logged in." }
+  }
+
+  const { data: room, error: roomError } = await supabase
+    .from("rooms")
+    .select("host_user_id, guest_user_id, current_turn_user_id")
+    .eq("id", roomId)
+    .single()
+
+  if (roomError || !room) {
+    console.error("Error fetching room for reset:", roomError)
+    return { success: false, error: "Room not found." }
+  }
+
+  // Only the current guesser or the host can initiate a reset
+  if (room.current_turn_user_id !== userId && room.host_user_id !== userId) {
+    return { success: false, error: "You are not authorized to reset the game." }
+  }
+
+  // Determine the next guesser (flip roles)
+  const nextGuesserId = room.current_turn_user_id === room.host_user_id ? room.guest_user_id : room.host_user_id
+
+  // Reset room state
+  const { error: updateError } = await supabase
+    .from("rooms")
+    .update({
+      word: null,
+      state: "waiting", // Back to waiting for new word
+      current_turn_user_id: nextGuesserId, // Assign next guesser
+    })
+    .eq("id", roomId)
+
+  if (updateError) {
+    console.error("Error resetting room:", updateError)
+    return { success: false, error: updateError.message }
+  }
+
+  // Delete old moves for a clean slate for the new round
+  const { error: deleteMovesError } = await supabase.from("moves").delete().eq("room_id", roomId)
+
+  if (deleteMovesError) {
+    console.error("Error deleting old moves:", deleteMovesError)
+    // Don't fail the whole reset if moves deletion fails, it's optional
+  }
+
+  return { success: true }
+}
+
+export async function switchWordSetter(roomId: string) {
+  const supabase = createServerClient()
+  const cookieStore = await cookies()
+  const userId = cookieStore.get("user_id")?.value
+
+  if (!userId) {
+    return { success: false, error: "User not logged in." }
+  }
+
+  const { data: room, error: roomError } = await supabase
+    .from("rooms")
+    .select("host_user_id, guest_user_id, current_turn_user_id, state")
+    .eq("id", roomId)
+    .single()
+
+  if (roomError || !room) {
+    console.error("Error fetching room for switch:", roomError)
+    return { success: false, error: "Room not found." }
+  }
+
+  // Only allow switching when in waiting state and both players are present
+  if (room.state !== "waiting" || !room.guest_user_id) {
+    return { success: false, error: "Cannot switch roles at this time." }
+  }
+
+  // Only the host can initiate the switch
+  if (room.host_user_id !== userId) {
+    return { success: false, error: "Only the host can switch roles." }
+  }
+
+  // Switch the current_turn_user_id (who will be the guesser)
+  const newGuesserId = room.current_turn_user_id === room.host_user_id ? room.guest_user_id : room.host_user_id
+
+  const { error: updateError } = await supabase
+    .from("rooms")
+    .update({ current_turn_user_id: newGuesserId })
+    .eq("id", roomId)
+
+  if (updateError) {
+    console.error("Error switching word setter:", updateError)
+    return { success: false, error: updateError.message }
+  }
+
+  return { success: true }
 }
