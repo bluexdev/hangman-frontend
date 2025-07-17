@@ -1,9 +1,13 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
+    --font-poppins: 'Poppins', system-ui, sans-serif;
     --background: 210 20% 98%; /* Very light blue-gray */
     --foreground: 210 10% 20%; /* Soft dark blue-gray */
 
@@ -74,6 +78,7 @@
   }
   body {
     @apply bg-background text-foreground font-sans;
+    font-family: var(--font-poppins);
   }
 }
 

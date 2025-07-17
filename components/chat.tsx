@@ -22,24 +22,22 @@ interface Message {
   created_at: string
 }
 
-
-
 interface ChatProps {
   roomId: string
   currentUser: { id: string; username: string }
   initialMessages: Message[]
+  onNewMessage?: (messageId: string, isOwnMessage: boolean) => void
+  isMobile?: boolean
 }
 
-export function Chat({ roomId, currentUser, initialMessages }: ChatProps) {
+export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMobile = false }: ChatProps) {
   const [messages, setMessages] = useState(initialMessages)
   const [newMessage, setNewMessage] = useState("")
   const { toast } = useToast()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const supabase = createBrowserClient()
 
-
   const { startRecording, stopRecording, isRecording, isConnecting, error: voiceError } = useVoice(roomId)
-
 
   useEffect(() => {
     const channel = supabase
@@ -54,6 +52,16 @@ export function Chat({ roomId, currentUser, initialMessages }: ChatProps) {
             const filtered = prev.filter(
               (msg) => !(msg.id.startsWith("temp-") && msg.message === newMsg.message && msg.username === newMsg.username)
             )
+            
+            // Notificar al componente padre sobre el nuevo mensaje
+            if (onNewMessage && newMsg.id && newMsg.username) {
+              const isOwnMessage = newMsg.username === currentUser.username
+              // Usar setTimeout para evitar actualizaciones de estado síncronas
+              setTimeout(() => {
+                onNewMessage(newMsg.id, isOwnMessage)
+              }, 0)
+            }
+            
             return [...filtered, newMsg]
           })
         },
@@ -63,7 +71,7 @@ export function Chat({ roomId, currentUser, initialMessages }: ChatProps) {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [roomId, supabase, currentUser.id])
+  }, [roomId, supabase, currentUser.id, currentUser.username, onNewMessage])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -99,13 +107,12 @@ export function Chat({ roomId, currentUser, initialMessages }: ChatProps) {
     }
   }
 
-
-
-
-
   return (
     <>
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+      <div className={cn(
+        "flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar",
+        isMobile ? "pb-2" : ""
+      )}>
         {messages.map((msg) => (
           <motion.div
             key={msg.id}
@@ -118,14 +125,15 @@ export function Chat({ roomId, currentUser, initialMessages }: ChatProps) {
               className={cn(
                 "max-w-[70%] p-3 rounded-xl shadow-md border-none",
                 msg.username === currentUser.username ? "chat-bubble-sender" : "chat-bubble-receiver",
+                isMobile ? "text-sm" : "text-base"
               )}
             >
               <CardContent className="p-0">
-                <p className="font-semibold text-sm mb-1">
+                <p className={cn("font-semibold mb-1", isMobile ? "text-xs" : "text-sm")}>
                   {msg.username === currentUser.username ? "Tú" : msg.username}
                 </p>
-                <p className="text-base">{msg.message}</p>
-                <p className="text-xs opacity-75 mt-1 text-right">
+                <p className={cn(isMobile ? "text-sm" : "text-base")}>{msg.message}</p>
+                <p className={cn("opacity-75 mt-1 text-right", isMobile ? "text-xs" : "text-xs")}>
                   {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </p>
               </CardContent>
@@ -133,11 +141,13 @@ export function Chat({ roomId, currentUser, initialMessages }: ChatProps) {
           </motion.div>
         ))}
 
-
-
         <div ref={messagesEndRef} />
       </div>
-      <div className="p-4 border-t border-border bg-muted/20 flex flex-row items-center gap-2">
+      
+      <div className={cn(
+        "p-4 border-t border-border bg-muted/20 flex flex-row items-center gap-2",
+        isMobile ? "p-3" : "p-4"
+      )}>
         <PushToTalkButton
           start={startRecording}
           stop={stopRecording}
@@ -150,10 +160,17 @@ export function Chat({ roomId, currentUser, initialMessages }: ChatProps) {
             placeholder="Escribe un mensaje..."
             value={newMessage}
             onChange={handleInputChange}
-            className="flex-1 input-base-style bg-background"
+            className={cn(
+              "flex-1 input-base-style bg-background",
+              isMobile ? "text-base" : ""
+            )}
+            style={isMobile ? { fontSize: '16px' } : {}}
           />
-          <Button type="submit" className="btn-primary-style p-2 rounded-full ml-2">
-            <Send className="h-5 w-5" />
+          <Button type="submit" className={cn(
+            "btn-primary-style rounded-full ml-2",
+            isMobile ? "p-2" : "p-2"
+          )}>
+            <Send className={cn(isMobile ? "h-4 w-4" : "h-5 w-5")} />
           </Button>
         </form>
       </div>

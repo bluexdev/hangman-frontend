@@ -1,13 +1,13 @@
 "use client" // This page needs to be a client component to use useState for the modal
 
-import React, { useState, useEffect } from "react" // Import React and useEffect
+import React, { useState, useEffect, useCallback } from "react" // Import React, useEffect and useCallback
 import { getRoomDetails, leaveRoom } from "@/app/actions"
 import { HangmanGame } from "@/components/hangman-game"
 import { Chat } from "@/components/chat"
 import { Card, CardContent, CardTitle } from "@/components/ui/card"
 import { ModeToggle } from "@/components/mode-toggle"
 import { Button } from "@/components/ui/button"
-import { Copy, LogOut, Loader2 } from "lucide-react" // Import Loader2 for spinner
+import { Copy, LogOut, Loader2, MessageCircle, X } from "lucide-react" // Import icons
 import { ShareRoomLinkButton } from "@/components/share-room-link-button"
 import { useToast } from "@/components/ui/use-toast"
 import {
@@ -37,6 +37,11 @@ export default function RoomPage({ params }: RoomPageProps) {
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true) // New loading state
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
+  
+  // Estados para el chat flotante en móviles
+  const [isChatOpen, setIsChatOpen] = useState(false)
+  const [unreadMessages, setUnreadMessages] = useState(0)
+  const [lastReadMessageId, setLastReadMessageId] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchInitialData = async () => {
@@ -52,6 +57,26 @@ export default function RoomPage({ params }: RoomPageProps) {
     }
     fetchInitialData()
   }, [roomId])
+
+  // Función para manejar nuevos mensajes y actualizar contador
+  const handleNewMessage = useCallback((messageId: string, isOwnMessage: boolean) => {
+    if (!messageId || typeof isOwnMessage !== 'boolean') return
+    
+    if (!isOwnMessage && !isChatOpen) {
+      setUnreadMessages(prev => prev + 1)
+    }
+    if (isChatOpen) {
+      setLastReadMessageId(messageId)
+    }
+  }, [isChatOpen])
+
+  // Función para abrir/cerrar chat
+  const toggleChat = () => {
+    setIsChatOpen(!isChatOpen)
+    if (!isChatOpen) {
+      setUnreadMessages(0)
+    }
+  }
 
   if (isLoading) {
     return (
@@ -152,9 +177,9 @@ export default function RoomPage({ params }: RoomPageProps) {
         </div>
       </div>
 
-      {/* Main Game and Chat Area - Flexible height */}
+      {/* Main Game and Chat Area */}
       <div className="flex flex-col lg:flex-row flex-1 gap-4 px-4 pb-4 overflow-hidden">
-        {/* Game Area */}
+        {/* Game Area - Ocupa toda la pantalla en móviles */}
         <Card className="card-base-style flex-1 p-4 sm:p-6 flex flex-col items-center justify-center overflow-hidden">
           <CardContent className="flex-1 w-full flex flex-col items-center justify-center overflow-auto">
             <HangmanGame
@@ -166,11 +191,65 @@ export default function RoomPage({ params }: RoomPageProps) {
           </CardContent>
         </Card>
 
-        {/* Chat Area */}
-        <div className="card-base-style w-full lg:w-1/3 flex flex-col overflow-hidden">
-          <Chat roomId={roomId} currentUser={currentUser} initialMessages={[]} />
+        {/* Chat Area - Solo visible en desktop */}
+        <div className="hidden lg:flex card-base-style w-full lg:w-1/3 flex-col overflow-hidden">
+          <Chat 
+            roomId={roomId} 
+            currentUser={currentUser} 
+            initialMessages={[]} 
+            onNewMessage={handleNewMessage}
+          />
         </div>
       </div>
+
+      {/* Botón flotante para chat en móviles - Solo visible cuando el chat está cerrado */}
+      {!isChatOpen && (
+        <div className="lg:hidden fixed bottom-6 right-6 z-50">
+          <Button
+            onClick={toggleChat}
+            className="relative bg-primary hover:bg-primary/90 text-primary-foreground rounded-full h-14 w-14 shadow-lg"
+            aria-label="Abrir chat"
+          >
+            <MessageCircle className="h-6 w-6" />
+            {unreadMessages > 0 && (
+              <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-6 w-6 flex items-center justify-center font-bold">
+                {unreadMessages > 9 ? '9+' : unreadMessages}
+              </span>
+            )}
+          </Button>
+        </div>
+      )}
+
+      {/* Chat Modal para móviles */}
+      {isChatOpen && (
+        <div className="lg:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm">
+          <div className="absolute bottom-0 left-0 right-0 h-[80vh] bg-background border-t-2 border-border rounded-t-3xl shadow-2xl">
+            {/* Header del chat modal */}
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="text-lg font-semibold">Chat de la Sala</h3>
+              <Button
+                onClick={toggleChat}
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            
+            {/* Contenido del chat */}
+            <div className="h-[calc(100%-4rem)] flex flex-col">
+              <Chat 
+                roomId={roomId} 
+                currentUser={currentUser} 
+                initialMessages={[]} 
+                onNewMessage={handleNewMessage}
+                isMobile={true}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Leave/Close Room Confirmation Modal */}
       <AlertDialog open={showLeaveConfirm} onOpenChange={setShowLeaveConfirm}>
