@@ -1,11 +1,11 @@
+// components/chat.tsx (solo las partes modificadas)
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect, useRef, useCallback } from "react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Send } from "lucide-react"
+import { Send, Mic, MicOff } from "lucide-react"
 import { sendMessage } from "@/app/actions"
 import { createBrowserClient } from "@/lib/supabase"
 import { useToast } from "@/components/ui/use-toast"
@@ -37,8 +37,28 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const supabase = createBrowserClient()
 
-  const { startRecording, stopRecording, isRecording, isConnecting, error: voiceError } = useVoice(roomId)
+  // Inicializar hook de voz con el userId
+  const { 
+    startRecording, 
+    stopRecording, 
+    isRecording, 
+    isConnecting, 
+    error: voiceError,
+    isConnected
+  } = useVoice(roomId, currentUser.id) // Pasamos el userId
 
+  // Mostrar errores de voz
+  useEffect(() => {
+    if (voiceError) {
+      toast({
+        title: "Error de voz",
+        description: voiceError,
+        variant: "destructive",
+      })
+    }
+  }, [voiceError, toast])
+
+  // Resto del código del chat permanece igual...
   useEffect(() => {
     const channel = supabase
       .channel(`room_chat:${roomId}`)
@@ -53,10 +73,8 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
               (msg) => !(msg.id.startsWith("temp-") && msg.message === newMsg.message && msg.username === newMsg.username)
             )
             
-            // Notificar al componente padre sobre el nuevo mensaje
             if (onNewMessage && newMsg.id && newMsg.username) {
               const isOwnMessage = newMsg.username === currentUser.username
-              // Usar setTimeout para evitar actualizaciones de estado síncronas
               setTimeout(() => {
                 onNewMessage(newMsg.id, isOwnMessage)
               }, 0)
@@ -85,7 +103,6 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     e.preventDefault()
     if (!newMessage.trim()) return
 
-    // Optimistic UI
     const tempId = `temp-${Date.now()}`
     const optimisticMsg = {
       id: tempId,
@@ -148,13 +165,22 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
         "p-4 border-t border-border bg-muted/20 flex flex-row items-center gap-2",
         isMobile ? "p-3" : "p-4"
       )}>
+        {/* Indicador de estado de voz */}
+        {!isConnected && (
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
+            <span>Conectando voz...</span>
+          </div>
+        )}
+        
         <PushToTalkButton
           start={startRecording}
           stop={stopRecording}
           isRecording={isRecording}
           isConnecting={isConnecting}
-          disabled={false}
+          disabled={!isConnected}
         />
+        
         <form onSubmit={handleSendMessage} className="flex flex-1">
           <Input
             placeholder="Escribe un mensaje..."
