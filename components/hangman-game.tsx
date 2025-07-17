@@ -42,12 +42,10 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
     room.current_turn_user_id !== currentUser.id && room.state === "waiting" && room.guest_user_id
 
   useEffect(() => {
-    // Initialize game state from initial props
-    if (initialRoomState.word) {
-      setWordToGuess(initialRoomState.word)
-      setGameStatus(initialRoomState.state)
-    }
-
+    // Initialize game state from initial props (solo en el primer render)
+    setRoom(initialRoomState)
+    setWordToGuess(initialRoomState.word || "")
+    setGameStatus(initialRoomState.state)
     const initialGuessed = new Set<string>()
     let initialIncorrect = 0
     if (initialMoves) {
@@ -126,7 +124,7 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [roomId, supabase, initialRoomState, initialMoves, wordToGuess, currentUser.id, toast])
+  }, [roomId, supabase, currentUser.id, toast])
 
   const handleNewMove = useCallback((letter: string, correct: boolean) => {
     setGuessedLetters((prev) => new Set(prev).add(letter))
@@ -158,7 +156,7 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
     }
   }, [guessedLetters, incorrectGuesses, wordToGuess, gameStatus, toast])
 
-  const displayWord = wordToGuess.split("").map((char) => (guessedLetters.has(char) ? char : "_"))
+  const displayWord = wordToGuess.split("").map((char: string) => (guessedLetters.has(char) ? char : "_"))
 
   const handleSetWord = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -171,7 +169,8 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
       toast({ title: "Error", description: result.error, variant: "destructive" })
     } else {
       toast({ title: "Palabra establecida", description: "¡Que empiece el juego!", variant: "default" })
-      setHostWordInput("") // Clear the input after successful submission
+      setHostWordInput("") // Solo limpiar el input, NO actualizar estados locales
+      // El resto del estado se actualizará por la suscripción de Supabase
     }
   }
 
@@ -287,7 +286,7 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
       <div className="flex flex-col items-center justify-between h-full w-full p-4">
         <div className="text-center mb-6 sm:mb-8">
           <h2 className="text-4xl sm:text-5xl font-bold tracking-widest text-primary mb-4">
-            {displayWord.map((char, index) => (
+            {displayWord.map((char: string, index: number) => (
               <motion.span
                 key={index}
                 initial={{ opacity: 0, y: 20 }}

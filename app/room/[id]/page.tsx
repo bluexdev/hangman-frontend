@@ -55,7 +55,7 @@ export default function RoomPage({ params }: RoomPageProps) {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center p-4 bg-background text-foreground">
+      <div className="flex h-screen items-center justify-center p-4 bg-background text-foreground">
         <Card className="card-base-style p-6 sm:p-8 text-center">
           <CardTitle className="text-3xl sm:text-4xl mb-4 flex items-center justify-center gap-2">
             <Loader2 className="h-8 w-8 animate-spin" /> Cargando Sala...
@@ -70,7 +70,7 @@ export default function RoomPage({ params }: RoomPageProps) {
 
   if (fetchError) {
     return (
-      <div className="flex min-h-screen items-center justify-center p-4 bg-background text-destructive">
+      <div className="flex h-screen items-center justify-center p-4 bg-background text-destructive">
         <Card className="card-base-style p-6 sm:p-8 text-center">
           <CardTitle className="text-3xl sm:text-4xl mb-4">Error</CardTitle>
           <CardContent className="text-base sm:text-lg">
@@ -87,7 +87,7 @@ export default function RoomPage({ params }: RoomPageProps) {
   if (!roomDetails || !currentUser) {
     // This case should ideally not be hit if isLoading and fetchError are handled
     return (
-      <div className="flex min-h-screen items-center justify-center p-4 bg-background text-foreground">
+      <div className="flex h-screen items-center justify-center p-4 bg-background text-foreground">
         <Card className="card-base-style p-6 sm:p-8 text-center">
           <CardTitle className="text-3xl sm:text-4xl mb-4">Cargando Sala...</CardTitle>
           <CardContent className="text-base sm:text-lg">
@@ -117,46 +117,46 @@ export default function RoomPage({ params }: RoomPageProps) {
   }
 
   return (
-    <main className="flex min-h-screen flex-col p-4 gap-4 bg-background">
-      {/* Top-right buttons */}
-      <div className="absolute top-4 right-4 z-10 flex gap-2">
-        <ModeToggle />
-        <Button
-          onClick={() => setShowLeaveConfirm(true)}
-          variant="destructive"
-          size="icon"
-          className="rounded-full h-10 w-10"
-          aria-label={isHost ? "Cerrar Sala" : "Salir de Sala"}
-        >
-          <LogOut className="h-5 w-5" />
-        </Button>
+    <main className="h-screen flex flex-col bg-background overflow-hidden">
+      {/* Header with all controls */}
+      <div className="flex-shrink-0 mx-4 mt-4 mb-4">
+        <div className="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 bg-card rounded-3xl shadow-xl border border-border">
+          <div className="text-center sm:text-left">
+            <h1 className="text-2xl sm:text-3xl font-bold text-primary">Sala</h1>
+            <p className="text-sm sm:text-base text-foreground/80">
+              Anfitrión: {roomDetails.host_username} {isHost && "(Tú)"}
+              {roomDetails.guest_username && (
+                <>
+                  {" "}
+                  | Invitado: {roomDetails.guest_username} {isGuest && "(Tú)"}
+                </>
+              )}
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-center sm:justify-end items-center gap-2">
+            <CopyRoomIdButton roomId={roomId} />
+            <ShareRoomLinkButton roomId={roomId} />
+            <div className="flex gap-2 ml-2">
+              <ModeToggle />
+              <Button
+                onClick={() => setShowLeaveConfirm(true)}
+                variant="destructive"
+                size="icon"
+                className="rounded-full h-10 w-10"
+                aria-label={isHost ? "Cerrar Sala" : "Salir de Sala"}
+              >
+                <LogOut className="h-5 w-5" />
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Main Info Bar (below top-right buttons) */}
-      <div className="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 bg-card rounded-3xl shadow-xl border border-border mt-16 sm:mt-0">
-        <div className="text-center sm:text-left">
-          <h1 className="text-2xl sm:text-3xl font-bold text-primary">Sala</h1> {/* Simplified title */}
-          <p className="text-sm sm:text-base text-foreground/80">
-            Anfitrión: {roomDetails.host_username} {isHost && "(Tú)"}
-            {roomDetails.guest_username && (
-              <>
-                {" "}
-                | Invitado: {roomDetails.guest_username} {isGuest && "(Tú)"}
-              </>
-            )}
-          </p>
-        </div>
-        <div className="flex flex-wrap justify-center sm:justify-end gap-2">
-          <CopyRoomIdButton roomId={roomId} />
-          <ShareRoomLinkButton roomId={roomId} />
-        </div>
-      </div>
-
-      {/* Main Game and Chat Area */}
-      <div className="flex flex-col lg:flex-row flex-1 gap-4">
+      {/* Main Game and Chat Area - Flexible height */}
+      <div className="flex flex-col lg:flex-row flex-1 gap-4 px-4 pb-4 overflow-hidden">
         {/* Game Area */}
-        <Card className="card-base-style flex-1 p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] lg:min-h-[calc(100vh-2rem-80px)]">
-          <CardContent className="flex-1 w-full flex flex-col items-center justify-center">
+        <Card className="card-base-style flex-1 p-4 sm:p-6 flex flex-col items-center justify-center overflow-hidden">
+          <CardContent className="flex-1 w-full flex flex-col items-center justify-center overflow-auto">
             <HangmanGame
               roomId={roomId}
               currentUser={currentUser}
@@ -167,9 +167,8 @@ export default function RoomPage({ params }: RoomPageProps) {
         </Card>
 
         {/* Chat Area */}
-        <div className="card-base-style w-full lg:w-1/3 flex flex-col min-h-[40vh] lg:min-h-[calc(100vh-2rem-80px)]">
-          <Chat roomId={roomId} currentUser={currentUser} initialMessages={[]} />{" "}
-          {/* Initial messages will be fetched by Chat's useEffect */}
+        <div className="card-base-style w-full lg:w-1/3 flex flex-col overflow-hidden">
+          <Chat roomId={roomId} currentUser={currentUser} initialMessages={[]} />
         </div>
       </div>
 
