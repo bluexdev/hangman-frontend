@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -33,6 +33,10 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
   const [incorrectGuesses, setIncorrectGuesses] = useState(0)
   const [gameStatus, setGameStatus] = useState<"playing" | "won" | "lost" | "waiting">("waiting")
   const [hostWordInput, setHostWordInput] = useState("")
+
+  // Referencias para los sonidos
+  const victoryAudioRef = useRef<HTMLAudioElement | null>(null)
+  const defeatAudioRef = useRef<HTMLAudioElement | null>(null)
 
   const isHost = room.host_user_id === currentUser.id
   const isGuest = room.guest_user_id === currentUser.id
@@ -156,6 +160,17 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
     }
   }, [guessedLetters, incorrectGuesses, wordToGuess, gameStatus, toast])
 
+  // Efecto para reproducir sonidos de victoria o derrota
+  useEffect(() => {
+    if (gameStatus === "won" && victoryAudioRef.current) {
+      victoryAudioRef.current.currentTime = 0;
+      victoryAudioRef.current.play();
+    } else if (gameStatus === "lost" && defeatAudioRef.current) {
+      defeatAudioRef.current.currentTime = 0;
+      defeatAudioRef.current.play();
+    }
+  }, [gameStatus])
+
   const displayWord = wordToGuess.split("").map((char: string) => (guessedLetters.has(char) ? char : "_"))
 
   const handleSetWord = async (e: React.FormEvent) => {
@@ -223,7 +238,7 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
           <div className="flex flex-col items-center justify-center h-full w-full p-4">
             <h2 className="text-xl sm:text-2xl font-semibold mb-4 text-primary">Esperando al invitado...</h2>
             <p className="text-base sm:text-lg text-foreground/80 text-center">
-              Comparte el código de sala con tu pareja.
+              Comparte el código de sala con tu partner.
             </p>
           </div>
         )
@@ -335,5 +350,12 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
     )
   }
 
-  return <div className="w-full h-full flex flex-col items-center justify-center">{renderGameArea()}</div>
+  return (
+    <>
+      {/* Audios ocultos para victoria y derrota */}
+      <audio ref={victoryAudioRef} src="/victory.mp3" preload="auto" />
+      <audio ref={defeatAudioRef} src="/defeat.mp3" preload="auto" />
+      <div className="w-full h-full flex flex-col items-center justify-center">{renderGameArea()}</div>
+    </>
+  )
 }

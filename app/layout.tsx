@@ -14,7 +14,7 @@ const poppins = Poppins({
 
 export const metadata: Metadata = {
   title: "Ahorcado Duo",
-  description: "Juego del ahorcado para parejas con chat y voz.",
+  description: "Juego del ahorcado para amigos con chat y voz.",
     generator: 'v0.dev'
 }
 

@@ -151,9 +151,6 @@ export function PushToTalkButton({
                      bg-popover text-popover-foreground text-xs px-2 py-1 
                      rounded-md shadow-lg border whitespace-nowrap z-10"
         >
-          <div className="text-center">
-            <div>🎙️ Mantén presionado o usa [Espacio]</div>
-          </div>
           <div className="absolute top-full left-1/2 transform -translate-x-1/2 
                          border-4 border-transparent border-t-popover" />
         </motion.div>

@@ -17,7 +17,7 @@ export default function HomePage() {
           <CardHeader>
             <CardTitle className="text-2xl sm:text-3xl text-primary">Crear Sala</CardTitle>
             <CardDescription className="text-foreground/80 text-sm sm:text-base">
-              Sé el anfitrión y comparte el código con tu pareja.
+              Sé el anfitrión y comparte el código con tu partner.
             </CardDescription>
           </CardHeader>
           <CardContent className="w-full">

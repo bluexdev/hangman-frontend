@@ -219,7 +219,8 @@ export async function sendMove(roomId: string, letter: string, correct: boolean)
   return { success: true }
 }
 
-export async function sendMessage(roomId: string, message: string) {
+// Función actualizada para incluir message_type
+export async function sendMessage(roomId: string, message: string, messageType: 'text' | 'gif' = 'text') {
   const supabase = createServerClient()
   const cookieStore = await cookies()
   const userId = cookieStore.get("user_id")?.value
@@ -229,7 +230,15 @@ export async function sendMessage(roomId: string, message: string) {
     return { success: false, error: "User not logged in or username not found." }
   }
 
-  const { error } = await supabase.from("messages").insert({ room_id: roomId, user_id: userId, message, username })
+  const { error } = await supabase
+    .from("messages")
+    .insert({ 
+      room_id: roomId, 
+      user_id: userId, 
+      message, 
+      username,
+      message_type: messageType
+    })
 
   if (error) {
     console.error("Error sending message:", error)
@@ -277,7 +286,7 @@ export async function getInitialMessages(roomId: string) {
   const { data, error } = await supabase
     .from("messages")
     .select(`
-    id, message, username, created_at
+    id, message, username, created_at, message_type
   `)
     .eq("room_id", roomId)
     .order("created_at", { ascending: true })
