@@ -121,3 +121,29 @@
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--primary-foreground);
 }
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(155, 155, 155, 0.5) transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(155, 155, 155, 0.5);
+  border-radius: 20px;
+}
+
+/* Asegurar que el chat sea visible en todos los tamaños */
+@media (max-width: 768px) {
+  .chat-container {
+    height: 100vh !important;
+    height: 100dvh !important; /* Para móviles modernos */
+  }
+}
