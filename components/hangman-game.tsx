@@ -259,7 +259,7 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
                 </Label>
                 <Input
                   id="word-input"
-                  placeholder="Ej: AMOR"
+                  placeholder="Ej: GATO"
                   value={hostWordInput}
                   onChange={(e) => setHostWordInput(e.target.value.toUpperCase())}
                   className="input-base-style mt-2 text-center text-xl sm:text-2xl tracking-widest"
