@@ -45,6 +45,16 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
   const isMyTurnToSetWord =
     room.current_turn_user_id !== currentUser.id && room.state === "waiting" && room.guest_user_id
 
+  // Función helper para obtener solo las letras (sin espacios ni caracteres especiales)
+  const getLettersOnly = (word: string) => {
+    return word.split("").filter(char => /[A-ZÑ]/.test(char))
+  }
+
+  // Función helper para obtener letras únicas de una palabra (sin espacios)
+  const getUniqueLetters = (word: string) => {
+    return new Set(getLettersOnly(word))
+  }
+
   useEffect(() => {
     // Initialize game state from initial props (solo en el primer render)
     setRoom(initialRoomState)
@@ -139,7 +149,8 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
 
   useEffect(() => {
     if (gameStatus === "playing" && wordToGuess) {
-      const uniqueLettersInWord = new Set(wordToGuess.split(""))
+      // Solo considerar las letras únicas (sin espacios) para determinar victoria
+      const uniqueLettersInWord = getUniqueLetters(wordToGuess)
       const correctGuessedLetters = new Set([...guessedLetters].filter((letter) => uniqueLettersInWord.has(letter)))
 
       if (correctGuessedLetters.size === uniqueLettersInWord.size) {
@@ -171,7 +182,16 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
     }
   }, [gameStatus])
 
-  const displayWord = wordToGuess.split("").map((char: string) => (guessedLetters.has(char) ? char : "_"))
+  // Mostrar la palabra con espacios automáticamente revelados
+  const displayWord = wordToGuess.split("").map((char: string) => {
+    if (char === " ") {
+      return " " // Los espacios siempre se muestran
+    }
+    if (!/[A-ZÑ]/.test(char)) {
+      return char // Otros caracteres especiales también se muestran
+    }
+    return guessedLetters.has(char) ? char : "_" // Solo las letras se ocultan si no han sido adivinadas
+  })
 
   const handleSetWord = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -179,7 +199,15 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
       toast({ title: "Error", description: "Por favor, introduce una palabra.", variant: "destructive" })
       return
     }
-    const result = await setWord(roomId, hostWordInput.toUpperCase())
+    
+    // Validar que la palabra tenga al menos una letra
+    const cleanWord = hostWordInput.toUpperCase().trim()
+    if (getLettersOnly(cleanWord).length === 0) {
+      toast({ title: "Error", description: "La palabra debe contener al menos una letra.", variant: "destructive" })
+      return
+    }
+    
+    const result = await setWord(roomId, cleanWord)
     if (!result.success) {
       toast({ title: "Error", description: result.error, variant: "destructive" })
     } else {
@@ -194,7 +222,8 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
       return
     }
 
-    const correct = wordToGuess.includes(letter)
+    // Solo verificar si la letra está en las letras de la palabra (no espacios)
+    const correct = getLettersOnly(wordToGuess).includes(letter)
     const result = await sendMove(roomId, letter, correct)
     if (!result.success) {
       toast({ title: "Error", description: result.error, variant: "destructive" })
@@ -225,7 +254,8 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
 
   const getKeyboardStatus = (letter: string) => {
     if (guessedLetters.has(letter)) {
-      return wordToGuess.includes(letter) ? "correct" : "incorrect"
+      // Solo verificar si la letra está en las letras de la palabra (no espacios)
+      return getLettersOnly(wordToGuess).includes(letter) ? "correct" : "incorrect"
     }
     return "default"
   }
@@ -259,12 +289,15 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
                 </Label>
                 <Input
                   id="word-input"
-                  placeholder="Ej: GATO"
+                  placeholder="Ej: PLAZA VEA"
                   value={hostWordInput}
                   onChange={(e) => setHostWordInput(e.target.value.toUpperCase())}
                   className="input-base-style mt-2 text-center text-xl sm:text-2xl tracking-widest"
-                  maxLength={15}
+                  maxLength={30}
                 />
+                <p className="text-sm text-foreground/60 mt-1 text-center">
+                  Puedes usar espacios y frases
+                </p>
               </div>
               <Button type="submit" className="w-full btn-primary-style">
                 Empezar Juego
@@ -300,16 +333,16 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
     return (
       <div className="flex flex-col items-center justify-between h-full w-full p-4">
         <div className="text-center mb-6 sm:mb-8">
-          <h2 className="text-4xl sm:text-5xl font-bold tracking-widest text-primary mb-4">
+          <h2 className="text-4xl sm:text-5xl font-bold tracking-widest text-primary mb-4 font-mono">
             {displayWord.map((char: string, index: number) => (
               <motion.span
                 key={index}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.05 }}
-                className="inline-block mx-0.5"
+                className={`inline-block ${char === " " ? "mx-4" : "mx-0.5"}`}
               >
-                {char}
+                {char === " " ? "\u00A0" : char} {/* Usar espacio no rompible para mejor visualización */}
               </motion.span>
             ))}
           </h2>

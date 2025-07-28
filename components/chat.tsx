@@ -79,6 +79,7 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
   const [isReconnecting, setIsReconnecting] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>(cachedData.connectionStatus)
   const [isInitialized, setIsInitialized] = useState(cachedData.messages.length > 0)
+  const [shouldScrollToBottom, setShouldScrollToBottom] = useState(true)
   
   const { toast } = useToast()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -93,6 +94,8 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
   const isPollingRef = useRef<boolean>(false)
   const lastPollTimeRef = useRef<number>(0)
   const hasInitialLoadRef = useRef<boolean>(false)
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const lastScrollPositionRef = useRef<number>(0)
 
   // Inicializar hook de voz con el userId
   const { 
@@ -104,6 +107,95 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     isConnected
   } = useVoice(roomId, currentUser.id)
 
+  // Función mejorada para hacer scroll al final
+  const scrollToBottom = useCallback((force: boolean = false) => {
+    if (!messagesContainerRef.current || !messagesEndRef.current) return
+
+    const container = messagesContainerRef.current
+    const currentScrollTop = container.scrollTop
+    const scrollHeight = container.scrollHeight
+    const clientHeight = container.clientHeight
+    
+    // En móviles o cuando se fuerza, siempre hacer scroll
+    if (force || isMobile || shouldScrollToBottom) {
+      // Usar múltiples métodos para asegurar el scroll en móviles
+      const scrollMethods = [
+        () => {
+          container.scrollTop = scrollHeight
+        },
+        () => {
+          messagesEndRef.current?.scrollIntoView({ 
+            behavior: isMobile ? "auto" : "smooth",
+            block: "end"
+          })
+        },
+        () => {
+          container.scrollTo({
+            top: scrollHeight,
+            behavior: isMobile ? "auto" : "smooth"
+          })
+        }
+      ]
+
+      // Ejecutar métodos de scroll con delays para asegurar efectividad
+      scrollMethods.forEach((method, index) => {
+        setTimeout(() => {
+          if (!isUnmountedRef.current) {
+            try {
+              method()
+            } catch (error) {
+              console.warn(`Scroll method ${index} failed:`, error)
+            }
+          }
+        }, index * (isMobile ? 50 : 100))
+      })
+
+      // Verificar que el scroll fue exitoso después de un delay
+      setTimeout(() => {
+        if (!isUnmountedRef.current && messagesContainerRef.current) {
+          const newScrollTop = messagesContainerRef.current.scrollTop
+          const newScrollHeight = messagesContainerRef.current.scrollHeight
+          const isAtBottom = Math.abs(newScrollHeight - newScrollTop - messagesContainerRef.current.clientHeight) < 5
+          
+          if (!isAtBottom && (force || isMobile)) {
+            // Si no llegamos al final, intentar una vez más con método directo
+            messagesContainerRef.current.scrollTop = newScrollHeight
+          }
+        }
+      }, isMobile ? 200 : 300)
+    }
+  }, [isMobile, shouldScrollToBottom])
+
+  // Función para detectar si el usuario está cerca del final
+  const checkIfShouldAutoScroll = useCallback(() => {
+    if (!messagesContainerRef.current) return true
+
+    const container = messagesContainerRef.current
+    const scrollTop = container.scrollTop
+    const scrollHeight = container.scrollHeight
+    const clientHeight = container.clientHeight
+    
+    // En móviles, ser más permisivo con el auto-scroll
+    const threshold = isMobile ? 150 : 100
+    const isNearBottom = (scrollHeight - scrollTop - clientHeight) < threshold
+    
+    return isNearBottom
+  }, [isMobile])
+
+  // Manejar scroll manual del usuario
+  const handleScroll = useCallback(() => {
+    if (!messagesContainerRef.current) return
+
+    const container = messagesContainerRef.current
+    const isNearBottom = checkIfShouldAutoScroll()
+    
+    // Actualizar si debemos hacer auto-scroll
+    setShouldScrollToBottom(isNearBottom)
+    
+    // Guardar posición para referencia
+    lastScrollPositionRef.current = container.scrollTop
+  }, [checkIfShouldAutoScroll])
+
   // Actualizar cache cuando cambian los mensajes
   useEffect(() => {
     messageCache.set(roomId, {
@@ -112,6 +204,53 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       connectionStatus: connectionStatus
     })
   }, [messages, connectionStatus, roomId])
+
+  // Mejorar el scroll automático al cambiar mensajes
+  useEffect(() => {
+    // Limpiar timeout anterior
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current)
+    }
+
+    // En móviles, hacer scroll inmediato y verificar después
+    if (isMobile) {
+      scrollToBottom(true)
+      
+      // Verificar múltiples veces que el scroll fue exitoso
+      const verifyScroll = (attempts = 0) => {
+        if (attempts >= 5 || isUnmountedRef.current) return
+        
+        setTimeout(() => {
+          if (messagesContainerRef.current && messagesEndRef.current) {
+            const container = messagesContainerRef.current
+            const isAtBottom = Math.abs(
+              container.scrollHeight - container.scrollTop - container.clientHeight
+            ) < 10
+            
+            if (!isAtBottom) {
+              scrollToBottom(true)
+              verifyScroll(attempts + 1)
+            }
+          }
+        }, 100 * (attempts + 1))
+      }
+      
+      verifyScroll()
+    } else {
+      // En desktop, usar el comportamiento normal con delay
+      scrollTimeoutRef.current = setTimeout(() => {
+        if (!isUnmountedRef.current) {
+          scrollToBottom()
+        }
+      }, 50)
+    }
+
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current)
+      }
+    }
+  }, [messages.length, isMobile, scrollToBottom])
 
   // Función optimizada para hacer polling de mensajes
   const pollMessages = useCallback(async (force: boolean = false) => {
@@ -157,6 +296,8 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
             
             if (typedMessages.length > 0) {
               lastMessageIdRef.current = typedMessages[typedMessages.length - 1].id
+              // Forzar scroll al final al cargar mensajes iniciales
+              setTimeout(() => scrollToBottom(true), 100)
             }
             
             return typedMessages
@@ -194,6 +335,11 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
               setIsInitialized(true)
             }
             
+            // Si hay mensajes nuevos, forzar scroll
+            if (hasNewMessages) {
+              setTimeout(() => scrollToBottom(true), 50)
+            }
+            
             return combinedMessages
           }
           
@@ -205,7 +351,7 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     } finally {
       isPollingRef.current = false
     }
-  }, [roomId, supabase, isInitialized])
+  }, [roomId, supabase, isInitialized, scrollToBottom])
 
   // Función para inicializar polling con mejor control
   const startPolling = useCallback(() => {
@@ -234,6 +380,10 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current)
       pollingIntervalRef.current = null
+    }
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current)
+      scrollTimeoutRef.current = null
     }
     if (channelRef.current) {
       try {
@@ -317,6 +467,9 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
               new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
             )
             
+            // Forzar scroll para mensajes nuevos
+            setTimeout(() => scrollToBottom(true), 50)
+            
             return newMessages
           })
         }
@@ -383,7 +536,7 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       })
 
     channelRef.current = channel
-  }, [roomId, supabase, currentUser.username, onNewMessage, cleanup, startPolling, pollMessages, toast, isInitialized, messages.length])
+  }, [roomId, supabase, currentUser.username, onNewMessage, cleanup, startPolling, pollMessages, toast, isInitialized, messages.length, scrollToBottom])
 
   // Función para recargar mensajes manualmente
   const reloadMessages = useCallback(async () => {
@@ -446,6 +599,8 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       }, 100)
     } else {
       setIsInitialized(true)
+      // Forzar scroll al inicializar con mensajes
+      setTimeout(() => scrollToBottom(true), 200)
     }
     
     // Configurar canal
@@ -489,6 +644,18 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     }
   }, []) // Solo ejecutar una vez al montar
 
+  // Agregar listener de scroll al contenedor
+  useEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    container.addEventListener('scroll', handleScroll, { passive: true })
+    
+    return () => {
+      container.removeEventListener('scroll', handleScroll)
+    }
+  }, [handleScroll])
+
   // Mostrar errores de voz
   useEffect(() => {
     if (voiceError) {
@@ -499,26 +666,6 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       })
     }
   }, [voiceError, toast])
-
-  // Scroll automático al final con mejor control
-  useEffect(() => {
-    const scrollToBottom = () => {
-      if (messagesEndRef.current && messagesContainerRef.current) {
-        const container = messagesContainerRef.current
-        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100
-        
-        // Solo hacer scroll automático si estamos cerca del final o es el primer mensaje
-        if (isNearBottom || messages.length <= 3) {
-          requestAnimationFrame(() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-          })
-        }
-      }
-    }
-    
-    // Delay para permitir que el DOM se actualice correctamente
-    setTimeout(scrollToBottom, 50)
-  }, [messages])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setNewMessage(e.target.value)
@@ -533,6 +680,9 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
 
   const sendTextMessage = async (message: string, type: 'text' | 'gif' = 'text') => {
     if (!message.trim()) return
+    
+    // Asegurar que el usuario esté cerca del final antes de enviar
+    setShouldScrollToBottom(true)
     
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     const optimisticMsg: Message = {
@@ -555,6 +705,9 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     })
     
     setNewMessage("")
+
+    // Forzar scroll inmediatamente después de agregar mensaje optimista
+    setTimeout(() => scrollToBottom(true), 50)
 
     try {
       const result = await sendMessage(roomId, message.trim(), type)
@@ -660,7 +813,10 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
           minHeight: isMobile ? '200px' : '300px',
           height: '100%',
           display: 'flex',
-          flexDirection: 'column'
+          flexDirection: 'column',
+          // Mejorar scroll en móviles
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain'
         }}
       >
         {/* Indicador de estado de conexión */}
