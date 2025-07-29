@@ -36,33 +36,23 @@ interface ChatProps {
 const messageCache = new Map<string, {
   messages: Message[]
   lastUpdate: number
-  connectionStatus: 'connecting' | 'connected' | 'disconnected'
 }>()
-
-// Cache de conexiones de Supabase para reutilizar
-const connectionCache = new Map<string, any>()
 
 export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMobile = false }: ChatProps) {
   // Inicializar estado con cache si existe
   const getCachedData = () => {
     const cached = messageCache.get(roomId)
-    if (cached && Date.now() - cached.lastUpdate < 30000) { // Cache válido por 30 segundos
-      return {
-        messages: cached.messages,
-        connectionStatus: cached.connectionStatus as 'connecting' | 'connected' | 'disconnected'
-      }
+    if (cached && Date.now() - cached.lastUpdate < 60000) { // Cache válido por 1 minuto
+      return cached.messages
     }
-    return {
-      messages: initialMessages,
-      connectionStatus: 'connecting' as const
-    }
+    return initialMessages
   }
 
-  const cachedData = getCachedData()
+  const cachedMessages = getCachedData()
   
   const [messages, setMessages] = useState<Message[]>(() => {
     // Combinar mensajes iniciales con cache, priorizando cache si es más reciente
-    const uniqueMessages = [...cachedData.messages]
+    const uniqueMessages = [...cachedMessages]
       .reduce((acc, msg) => {
         if (!acc.find(m => m.id === msg.id)) {
           acc.push(msg)
@@ -76,9 +66,8 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
   
   const [newMessage, setNewMessage] = useState("")
   const [showGiphySelector, setShowGiphySelector] = useState(false)
-  const [isReconnecting, setIsReconnecting] = useState(false)
-  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>(cachedData.connectionStatus)
-  const [isInitialized, setIsInitialized] = useState(cachedData.messages.length > 0)
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
+  const [isInitialized, setIsInitialized] = useState(cachedMessages.length > 0)
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true)
   
   const { toast } = useToast()
@@ -98,6 +87,8 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
   const lastScrollTopRef = useRef<number>(0)
   const messagesLengthRef = useRef<number>(0)
   const isScrollingRef = useRef<boolean>(false)
+  const connectionStableRef = useRef<boolean>(false)
+  const lastConnectionChangeRef = useRef<number>(0)
 
   // Inicializar hook de voz con el userId
   const { 
@@ -113,12 +104,11 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
   useEffect(() => {
     messageCache.set(roomId, {
       messages: messages,
-      lastUpdate: Date.now(),
-      connectionStatus: connectionStatus
+      lastUpdate: Date.now()
     })
-  }, [messages, connectionStatus, roomId])
+  }, [messages, roomId])
 
-  // Función simplificada para scroll automático
+  // Función mejorada para scroll automático
   const scrollToBottom = useCallback((force: boolean = false) => {
     if (!messagesContainerRef.current || !messagesEndRef.current || isScrollingRef.current) return
     
@@ -128,36 +118,36 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     const scrollTop = container.scrollTop
     
     // Verificar si ya estamos en el fondo
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 5
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 10
     if (isAtBottom && !force) return
     
-    // En móvil, ser más directo
-    if (isMobile && (force || shouldAutoScroll)) {
-      isScrollingRef.current = true
-      container.scrollTop = scrollHeight
-      
-      setTimeout(() => {
-        isScrollingRef.current = false
-      }, 100)
-      return
-    }
-    
-    // En desktop, usar smooth scroll si no es forzado
+    // Scroll suave pero efectivo
     if (force || shouldAutoScroll) {
       isScrollingRef.current = true
       
-      messagesEndRef.current.scrollIntoView({ 
-        behavior: force ? "auto" : "smooth",
-        block: "end"
-      })
+      // Usar scrollTop directo para ser más confiable
+      const targetScrollTop = scrollHeight - clientHeight
       
-      setTimeout(() => {
-        isScrollingRef.current = false
-      }, force ? 50 : 300)
+      if (force || isMobile) {
+        // Scroll inmediato en móvil o cuando es forzado
+        container.scrollTop = targetScrollTop
+        setTimeout(() => {
+          isScrollingRef.current = false
+        }, 100)
+      } else {
+        // Scroll suave en desktop
+        container.scrollTo({
+          top: targetScrollTop,
+          behavior: 'smooth'
+        })
+        setTimeout(() => {
+          isScrollingRef.current = false
+        }, 500)
+      }
     }
   }, [isMobile, shouldAutoScroll])
 
-  // Manejar scroll del usuario - simplificado
+  // Manejar scroll del usuario - simplificado y mejorado
   const handleScroll = useCallback(() => {
     if (!messagesContainerRef.current || isScrollingRef.current) return
     
@@ -166,8 +156,8 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     const scrollTop = container.scrollTop
     const clientHeight = container.clientHeight
     
-    // Detectar si está cerca del final (dentro de 50px)
-    const isNearBottom = scrollHeight - scrollTop - clientHeight < 50
+    // Detectar si está cerca del final (dentro de 100px para ser más tolerante)
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 100
     
     // Solo actualizar si cambió el estado
     if (isNearBottom !== shouldAutoScroll) {
@@ -182,17 +172,30 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     const container = messagesContainerRef.current
     if (!container) return
     
-    container.addEventListener('scroll', handleScroll, { passive: true })
+    // Usar throttle para mejorar performance
+    let scrollTimeout: NodeJS.Timeout | null = null
+    const throttledHandleScroll = () => {
+      if (scrollTimeout) return
+      scrollTimeout = setTimeout(() => {
+        handleScroll()
+        scrollTimeout = null
+      }, 100)
+    }
+    
+    container.addEventListener('scroll', throttledHandleScroll, { passive: true })
     
     return () => {
-      container.removeEventListener('scroll', handleScroll)
+      container.removeEventListener('scroll', throttledHandleScroll)
+      if (scrollTimeout) {
+        clearTimeout(scrollTimeout)
+      }
       if (scrollTimeoutRef.current) {
         clearTimeout(scrollTimeoutRef.current)
       }
     }
   }, [handleScroll])
 
-  // Scroll automático cuando cambian los mensajes - simplificado
+  // Scroll automático cuando cambian los mensajes - mejorado
   useEffect(() => {
     const hasNewMessages = messages.length > messagesLengthRef.current
     const isFirstLoad = messagesLengthRef.current === 0 && messages.length > 0
@@ -200,10 +203,10 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     
     if (isFirstLoad) {
       // Primera carga: scroll inmediato al final
-      setTimeout(() => scrollToBottom(true), 100)
+      setTimeout(() => scrollToBottom(true), 200)
     } else if (hasNewMessages && shouldAutoScroll) {
       // Nuevos mensajes y auto-scroll activado
-      setTimeout(() => scrollToBottom(false), 150)
+      setTimeout(() => scrollToBottom(false), 100)
     }
   }, [messages.length, shouldAutoScroll, scrollToBottom])
 
@@ -213,14 +216,12 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     
     // Evitar polling demasiado frecuente a menos que sea forzado
     const now = Date.now()
-    if (!force && now - lastPollTimeRef.current < 1000) return
+    if (!force && now - lastPollTimeRef.current < 2000) return
     
     isPollingRef.current = true
     lastPollTimeRef.current = now
 
     try {
-      console.log('Polling messages for room:', roomId)
-      
       const { data, error } = await supabase
         .from("messages")
         .select(`id, message, username, created_at, message_type`)
@@ -240,8 +241,6 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
           created_at: item.created_at as string,
           message_type: (item.message_type as 'text' | 'gif') || 'text'
         }))
-
-        console.log('Polled messages:', typedMessages.length)
 
         setMessages(prevMessages => {
           // Si es la primera carga y no tenemos mensajes, usar los obtenidos
@@ -301,24 +300,6 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     }
   }, [roomId, supabase, isInitialized])
 
-  // Función para inicializar polling con mejor control
-  const startPolling = useCallback(() => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current)
-    }
-    
-    // Polling más agresivo si no está inicializado o desconectado
-    const pollInterval = (!isInitialized || connectionStatus === 'disconnected') ? 1500 : 5000
-    
-    pollingIntervalRef.current = setInterval(() => {
-      if (!isUnmountedRef.current) {
-        if (!isInitialized || connectionStatus === 'disconnected') {
-          pollMessages()
-        }
-      }
-    }, pollInterval)
-  }, [connectionStatus, pollMessages, isInitialized])
-
   // Función para limpiar recursos
   const cleanup = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -342,27 +323,21 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       channelRef.current = null
     }
     isPollingRef.current = false
+    connectionStableRef.current = false
   }, [supabase])
 
-  // Función mejorada para configurar el canal de Supabase
+  // Función mejorada para configurar el canal de Supabase con mejor estabilidad
   const setupChannel = useCallback(() => {
     if (isUnmountedRef.current) return
 
     cleanup()
     
-    // Si hay conexión cacheada y aún es válida, reutilizarla
-    const cachedConnection = connectionCache.get(roomId)
-    if (cachedConnection && cachedConnection.state === 'joined') {
-      channelRef.current = cachedConnection
-      setConnectionStatus('connected')
-      setIsInitialized(true)
-      return
-    }
+    // Marcar el momento del cambio de conexión para evitar cambios muy frecuentes
+    const now = Date.now()
+    lastConnectionChangeRef.current = now
     
     setConnectionStatus('connecting')
     reconnectAttemptsRef.current += 1
-
-    console.log('Setting up channel for room:', roomId)
 
     const channel = supabase
       .channel(`room_chat:${roomId}`)
@@ -378,7 +353,6 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
           if (isUnmountedRef.current) return
 
           const newMsg = payload.new as Message
-          console.log('New message received:', newMsg.id)
           
           // Evitar duplicados más estricto
           if (newMsg.id === lastMessageIdRef.current) {
@@ -422,107 +396,60 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       .subscribe((status) => {
         if (isUnmountedRef.current) return
 
-        console.log('Channel status for room', roomId, ':', status)
+        // Evitar cambios de estado muy frecuentes
+        const timeSinceLastChange = Date.now() - lastConnectionChangeRef.current
+        if (timeSinceLastChange < 1000 && status !== 'SUBSCRIBED') {
+          return
+        }
         
         if (status === 'SUBSCRIBED') {
-          setConnectionStatus('connected')
-          setIsInitialized(true)
-          reconnectAttemptsRef.current = 0
-          
-          // Guardar conexión en cache
-          connectionCache.set(roomId, channel)
-          
-          // Parar polling cuando está conectado
-          if (pollingIntervalRef.current) {
-            clearInterval(pollingIntervalRef.current)
-            pollingIntervalRef.current = null
-          }
-          
-          // Hacer un refresh de mensajes al conectar solo si no tenemos mensajes
-          if (messages.length === 0) {
-            setTimeout(() => {
-              if (!isUnmountedRef.current) {
-                pollMessages(true) // Forzar polling
+          // Solo cambiar a conectado si realmente estamos estables
+          setTimeout(() => {
+            if (!isUnmountedRef.current && channelRef.current === channel) {
+              setConnectionStatus('connected')
+              setIsInitialized(true)
+              reconnectAttemptsRef.current = 0
+              connectionStableRef.current = true
+              
+              // Parar polling cuando está conectado y estable
+              if (pollingIntervalRef.current) {
+                clearInterval(pollingIntervalRef.current)
+                pollingIntervalRef.current = null
               }
-            }, 500)
-          }
+            }
+          }, 500) // Dar tiempo para que se estabilice
           
         } else if (status === 'CHANNEL_ERROR' || status === 'CLOSED') {
-          setConnectionStatus('disconnected')
-          
-          // Remover de cache si falla
-          connectionCache.delete(roomId)
-          
-          // Iniciar polling como fallback inmediatamente
-          startPolling()
-          
-          // Intentar reconectar con backoff exponencial solo si no hemos alcanzado el límite
-          if (reconnectAttemptsRef.current < 3) { // Reducir intentos para ser menos agresivo
-            const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current - 1), 5000)
+          // Solo actuar si hemos pasado suficiente tiempo desde el último cambio
+          if (timeSinceLastChange > 2000) {
+            connectionStableRef.current = false
+            setConnectionStatus('disconnected')
             
-            reconnectTimeoutRef.current = setTimeout(() => {
-              if (!isUnmountedRef.current) {
-                console.log(`Attempting to reconnect (attempt ${reconnectAttemptsRef.current})...`)
-                setupChannel()
-              }
-            }, delay)
-          } else {
-            console.log('Max reconnection attempts reached, using polling mode')
-            if (!isInitialized) {
-              // Solo mostrar toast si realmente no tenemos mensajes
-              toast({
-                title: "Modo offline",
-                description: "Cargando mensajes...",
-                variant: "default",
-              })
+            // Iniciar polling como fallback
+            if (!pollingIntervalRef.current) {
+              pollingIntervalRef.current = setInterval(() => {
+                if (!isUnmountedRef.current && !connectionStableRef.current) {
+                  pollMessages()
+                }
+              }, 3000)
+            }
+            
+            // Intentar reconectar con backoff exponencial más conservador
+            if (reconnectAttemptsRef.current < 5) {
+              const delay = Math.min(2000 * Math.pow(1.5, reconnectAttemptsRef.current - 1), 10000)
+              
+              reconnectTimeoutRef.current = setTimeout(() => {
+                if (!isUnmountedRef.current && !connectionStableRef.current) {
+                  setupChannel()
+                }
+              }, delay)
             }
           }
         }
       })
 
     channelRef.current = channel
-  }, [roomId, supabase, currentUser.username, onNewMessage, cleanup, startPolling, pollMessages, toast, isInitialized, messages.length])
-
-  // Función para recargar mensajes manualmente
-  const reloadMessages = useCallback(async () => {
-    if (isUnmountedRef.current) return
-    
-    setIsReconnecting(true)
-    try {
-      await pollMessages(true) // Forzar polling
-      
-      // Si aún no está conectado, intentar reconectar
-      if (connectionStatus !== 'connected') {
-        reconnectAttemptsRef.current = 0
-        setupChannel()
-      }
-      
-      // Forzar scroll al final después de recargar
-      setTimeout(() => {
-        scrollToBottom(true)
-      }, 200)
-    } finally {
-      setTimeout(() => {
-        if (!isUnmountedRef.current) {
-          setIsReconnecting(false)
-        }
-      }, 1000)
-    }
-  }, [pollMessages, connectionStatus, setupChannel, scrollToBottom])
-
-  // Función para manejar visibilidad de la página
-  const handleVisibilityChange = useCallback(() => {
-    if (document.visibilityState === 'visible' && !isUnmountedRef.current) {
-      console.log('Page became visible, refreshing chat')
-      
-      // Recargar mensajes cuando la página vuelve a estar visible
-      setTimeout(() => {
-        if (!isUnmountedRef.current) {
-          reloadMessages()
-        }
-      }, 100)
-    }
-  }, [reloadMessages])
+  }, [roomId, supabase, currentUser.username, onNewMessage, cleanup, pollMessages])
 
   // Configurar canal inicial y listeners
   useEffect(() => {
@@ -537,11 +464,8 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       hasInitialLoadRef.current = true
     }
     
-    console.log('Initializing chat for room:', roomId, 'with', messages.length, 'cached messages')
-    
     // Si no tenemos mensajes en cache, hacer polling inmediato
     if (messages.length === 0) {
-      console.log('No cached messages, starting immediate poll')
       setTimeout(() => {
         if (!isUnmountedRef.current) {
           pollMessages(true)
@@ -550,42 +474,46 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     } else {
       setIsInitialized(true)
       // Scroll inicial si tenemos mensajes en cache
-      setTimeout(() => scrollToBottom(true), 200)
+      setTimeout(() => scrollToBottom(true), 300)
     }
     
     // Configurar canal
     setupChannel()
     
-    // Listeners para eventos de ventana
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    
+    // Listeners para eventos de ventana más conservadores
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !isUnmountedRef.current) {
+        // Solo refrescar si ha pasado tiempo suficiente
+        setTimeout(() => {
+          if (!isUnmountedRef.current && !connectionStableRef.current) {
+            pollMessages(true)
+          }
+        }, 1000)
+      }
+    }
+
     const handleFocus = () => {
-      if (!isUnmountedRef.current) {
-        console.log('Window focused, refreshing messages')
+      if (!isUnmountedRef.current && !connectionStableRef.current) {
         setTimeout(() => {
           if (!isUnmountedRef.current) {
-            reloadMessages()
+            pollMessages(true)
           }
-        }, 100)
+        }, 500)
       }
     }
 
     const handleOnline = () => {
       if (!isUnmountedRef.current && connectionStatus === 'disconnected') {
-        console.log('Connection restored, reconnecting')
         reconnectAttemptsRef.current = 0
-        setTimeout(setupChannel, 100)
+        setTimeout(setupChannel, 1000)
       }
     }
 
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('focus', handleFocus)
     window.addEventListener('online', handleOnline)
     
-    // Inicializar polling de respaldo
-    startPolling()
-    
     return () => {
-      console.log('Cleaning up chat for room:', roomId)
       isUnmountedRef.current = true
       cleanup()
       document.removeEventListener('visibilitychange', handleVisibilityChange)
@@ -725,42 +653,28 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
   }
 
   const getConnectionStatusText = () => {
-    if (isReconnecting) return 'Sincronizando...'
-    
     if (!isInitialized) {
-      return 'Cargando mensajes...'
+      return 'Cargando...'
     }
     
     switch (connectionStatus) {
-      case 'connected': return 'Conectado'
+      case 'connected': return 'En línea'
       case 'connecting': return 'Conectando...'
-      case 'disconnected': return 'Modo offline'
-      default: return 'Estado desconocido'
+      case 'disconnected': return 'Reconectando...'
+      default: return ''
     }
   }
 
   return (
-    <>
-      <div 
-        ref={messagesContainerRef}
-        className={cn(
-          "flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar",
-          isMobile ? "pb-2" : ""
-        )}
-        style={{
-          minHeight: isMobile ? '200px' : '300px',
-          height: '100%',
-          display: 'flex',
-          flexDirection: 'column'
-        }}
-      >
-        {/* Indicador de estado de conexión */}
-        <div className="flex items-center justify-between py-2 flex-shrink-0">
+    <div className="flex flex-col h-full">
+      {/* Indicador de estado FIJO en la parte superior */}
+      <div className="flex-shrink-0 px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border/50">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <div className={cn(
               "w-2 h-2 rounded-full", 
               getConnectionStatusColor(),
-              (connectionStatus === 'connecting' || isReconnecting) ? "animate-pulse" : ""
+              connectionStatus === 'connecting' ? "animate-pulse" : ""
             )} />
             <span>{getConnectionStatusText()}</span>
             {isInitialized && messages.length > 0 && (
@@ -770,48 +684,49 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
             )}
           </div>
           
-          <div className="flex items-center gap-2">
+          {/* Botón para ir al final solo si no está en auto-scroll */}
+          {!shouldAutoScroll && (
             <Button
               variant="ghost"
               size="sm"
-              onClick={reloadMessages}
-              className="text-xs px-2 py-1"
-              disabled={isReconnecting}
+              onClick={() => {
+                setShouldAutoScroll(true)
+                setTimeout(() => scrollToBottom(true), 50)
+              }}
+              className="text-xs px-2 py-1 h-6"
             >
-              {isReconnecting ? "..." : "↻"}
+              ↓
             </Button>
-            
-            {/* Botón para ir al final */}
-            {!shouldAutoScroll && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setShouldAutoScroll(true)
-                  setTimeout(() => scrollToBottom(true), 50)
-                }}
-                className="text-xs px-2 py-1"
-              >
-                ↓
-              </Button>
-            )}
-          </div>
+          )}
         </div>
+      </div>
 
-        <div className="flex-1 space-y-4 min-h-0">
-          {!isInitialized || (messages.length === 0 && connectionStatus === 'connecting') ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              <div className="text-center space-y-2">
-                <div className="w-6 h-6 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin mx-auto"></div>
-                <p>Cargando mensajes...</p>
-              </div>
+      {/* Área de mensajes */}
+      <div 
+        ref={messagesContainerRef}
+        className={cn(
+          "flex-1 overflow-y-auto p-4 custom-scrollbar",
+          isMobile ? "pb-2" : ""
+        )}
+        style={{
+          minHeight: isMobile ? '200px' : '300px',
+          height: '100%'
+        }}
+      >
+        {!isInitialized || (messages.length === 0 && connectionStatus === 'connecting') ? (
+          <div className="flex items-center justify-center h-full text-muted-foreground">
+            <div className="text-center space-y-2">
+              <div className="w-6 h-6 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin mx-auto"></div>
+              <p>Cargando mensajes...</p>
             </div>
-          ) : messages.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              <p className="text-center">No hay mensajes aún</p>
-            </div>
-          ) : (
-            messages.map((msg) => (
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-muted-foreground">
+            <p className="text-center">No hay mensajes aún</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {messages.map((msg) => (
               <motion.div
                 key={msg.id}
                 initial={{ opacity: 0, y: 20 }}
@@ -840,17 +755,18 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
                   </CardContent>
                 </Card>
               </motion.div>
-            ))
-          )}
-        </div>
-
-        <div ref={messagesEndRef} />
+            ))}
+            
+            {/* Espacio adicional después del último mensaje */}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
       </div>
       
+      {/* Área de entrada de mensajes */}
       <div className={cn(
-        "relative p-4 border-t border-border bg-muted/20 flex flex-row items-center gap-2",
-        isMobile ? "p-3" : "p-4",
-        "flex-shrink-0"
+        "relative p-4 border-t border-border bg-muted/20 flex flex-row items-center gap-2 flex-shrink-0",
+        isMobile ? "p-3" : "p-4"
       )}>
         {/* Selector de GIFs */}
         <AnimatePresence>
@@ -917,6 +833,6 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
           </Button>
         </form>
       </div>
-    </>
+    </div>
   )
 }

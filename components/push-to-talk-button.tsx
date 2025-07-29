@@ -96,7 +96,6 @@ export function PushToTalkButton({
     return (
       <>
         <MicOff className="h-5 w-5" />
-        <span className="ml-2">Mantén presionado</span>
       </>
     )
   }
@@ -140,21 +139,6 @@ export function PushToTalkButton({
           )}
         </Button>
       </motion.div>
-
-      {/* Instrucciones flotantes */}
-      {showInstructions && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          className="absolute -top-12 left-1/2 transform -translate-x-1/2 
-                     bg-popover text-popover-foreground text-xs px-2 py-1 
-                     rounded-md shadow-lg border whitespace-nowrap z-10"
-        >
-          <div className="absolute top-full left-1/2 transform -translate-x-1/2 
-                         border-4 border-transparent border-t-popover" />
-        </motion.div>
-      )}
     </div>
   )
 }

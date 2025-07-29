@@ -317,11 +317,14 @@ export function HangmanGame({ roomId, currentUser, initialRoomState, initialMove
         )
       } else {
         // Other user should set the word
+         const wordSetterName = room.current_turn_user_id === room.host_user_id 
+          ? (room.guest_username || "el otro jugador")
+          : (room.host_username || "el otro jugador")
+        
         return (
           <div className="flex flex-col items-center justify-center h-full w-full p-4">
             <h2 className="text-xl sm:text-2xl font-semibold mb-4 text-primary">
-              Esperando que {room.current_turn_user_id === room.host_user_id ? room.guest_username : room.host_username}{" "}
-              elija la palabra...
+              Esperando que {wordSetterName} elija la palabra...
             </h2>
             <p className="text-base sm:text-lg text-foreground/80 text-center">¡Prepárate para adivinar!</p>
           </div>
