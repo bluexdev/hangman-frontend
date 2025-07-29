@@ -80,6 +80,7 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
   const reconnectAttemptsRef = useRef<number>(0)
   const isUnmountedRef = useRef<boolean>(false)
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const backgroundPollingRef = useRef<NodeJS.Timeout | null>(null)
   const isPollingRef = useRef<boolean>(false)
   const lastPollTimeRef = useRef<number>(0)
   const hasInitialLoadRef = useRef<boolean>(false)
@@ -210,13 +211,13 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     }
   }, [messages.length, shouldAutoScroll, scrollToBottom])
 
-  // Función optimizada para hacer polling de mensajes
+  // Función optimizada para hacer polling de mensajes - MAS RAPIDO
   const pollMessages = useCallback(async (force: boolean = false) => {
     if (isUnmountedRef.current || (isPollingRef.current && !force)) return
     
-    // Evitar polling demasiado frecuente a menos que sea forzado
+    // Polling más agresivo - reducir tiempo mínimo entre polls
     const now = Date.now()
-    if (!force && now - lastPollTimeRef.current < 2000) return
+    if (!force && now - lastPollTimeRef.current < 500) return
     
     isPollingRef.current = true
     lastPollTimeRef.current = now
@@ -310,6 +311,10 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       clearInterval(pollingIntervalRef.current)
       pollingIntervalRef.current = null
     }
+    if (backgroundPollingRef.current) {
+      clearInterval(backgroundPollingRef.current)
+      backgroundPollingRef.current = null
+    }
     if (scrollTimeoutRef.current) {
       clearTimeout(scrollTimeoutRef.current)
       scrollTimeoutRef.current = null
@@ -326,13 +331,12 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     connectionStableRef.current = false
   }, [supabase])
 
-  // Función mejorada para configurar el canal de Supabase con mejor estabilidad
+  // Función mejorada para configurar el canal de Supabase - MAS AGRESIVO
   const setupChannel = useCallback(() => {
     if (isUnmountedRef.current) return
 
     cleanup()
     
-    // Marcar el momento del cambio de conexión para evitar cambios muy frecuentes
     const now = Date.now()
     lastConnectionChangeRef.current = now
     
@@ -395,15 +399,8 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       )
       .subscribe((status) => {
         if (isUnmountedRef.current) return
-
-        // Evitar cambios de estado muy frecuentes
-        const timeSinceLastChange = Date.now() - lastConnectionChangeRef.current
-        if (timeSinceLastChange < 1000 && status !== 'SUBSCRIBED') {
-          return
-        }
         
         if (status === 'SUBSCRIBED') {
-          // Solo cambiar a conectado si realmente estamos estables
           setTimeout(() => {
             if (!isUnmountedRef.current && channelRef.current === channel) {
               setConnectionStatus('connected')
@@ -416,34 +413,35 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
                 clearInterval(pollingIntervalRef.current)
                 pollingIntervalRef.current = null
               }
+              if (backgroundPollingRef.current) {
+                clearInterval(backgroundPollingRef.current)
+                backgroundPollingRef.current = null
+              }
             }
-          }, 500) // Dar tiempo para que se estabilice
+          }, 300)
           
         } else if (status === 'CHANNEL_ERROR' || status === 'CLOSED') {
-          // Solo actuar si hemos pasado suficiente tiempo desde el último cambio
-          if (timeSinceLastChange > 2000) {
-            connectionStableRef.current = false
-            setConnectionStatus('disconnected')
+          connectionStableRef.current = false
+          setConnectionStatus('disconnected')
+          
+          // Iniciar polling INMEDIATO como fallback
+          if (!pollingIntervalRef.current) {
+            pollingIntervalRef.current = setInterval(() => {
+              if (!isUnmountedRef.current && !connectionStableRef.current) {
+                pollMessages(true)
+              }
+            }, 1000) // Polling cada 1 segundo cuando no hay conexión
+          }
+          
+          // Intentar reconectar más rápido
+          if (reconnectAttemptsRef.current < 10) {
+            const delay = Math.min(500 * Math.pow(1.2, reconnectAttemptsRef.current - 1), 3000)
             
-            // Iniciar polling como fallback
-            if (!pollingIntervalRef.current) {
-              pollingIntervalRef.current = setInterval(() => {
-                if (!isUnmountedRef.current && !connectionStableRef.current) {
-                  pollMessages()
-                }
-              }, 3000)
-            }
-            
-            // Intentar reconectar con backoff exponencial más conservador
-            if (reconnectAttemptsRef.current < 5) {
-              const delay = Math.min(2000 * Math.pow(1.5, reconnectAttemptsRef.current - 1), 10000)
-              
-              reconnectTimeoutRef.current = setTimeout(() => {
-                if (!isUnmountedRef.current && !connectionStableRef.current) {
-                  setupChannel()
-                }
-              }, delay)
-            }
+            reconnectTimeoutRef.current = setTimeout(() => {
+              if (!isUnmountedRef.current && !connectionStableRef.current) {
+                setupChannel()
+              }
+            }, delay)
           }
         }
       })
@@ -451,7 +449,7 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
     channelRef.current = channel
   }, [roomId, supabase, currentUser.username, onNewMessage, cleanup, pollMessages])
 
-  // Configurar canal inicial y listeners
+  // Setup inicial con polling continuo en background
   useEffect(() => {
     isUnmountedRef.current = false
     
@@ -464,48 +462,49 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       hasInitialLoadRef.current = true
     }
     
-    // Si no tenemos mensajes en cache, hacer polling inmediato
+    // Polling inmediato si no hay mensajes
     if (messages.length === 0) {
-      setTimeout(() => {
-        if (!isUnmountedRef.current) {
-          pollMessages(true)
-        }
-      }, 100)
+      pollMessages(true)
     } else {
       setIsInitialized(true)
-      // Scroll inicial si tenemos mensajes en cache
       setTimeout(() => scrollToBottom(true), 300)
     }
     
     // Configurar canal
     setupChannel()
     
-    // Listeners para eventos de ventana más conservadores
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && !isUnmountedRef.current) {
-        // Solo refrescar si ha pasado tiempo suficiente
-        setTimeout(() => {
-          if (!isUnmountedRef.current && !connectionStableRef.current) {
-            pollMessages(true)
-          }
-        }, 1000)
+    // POLLING CONTINUO EN BACKGROUND - Esto asegura que siempre recibas mensajes
+    backgroundPollingRef.current = setInterval(() => {
+      if (!isUnmountedRef.current) {
+        pollMessages(true)
       }
-    }
-
-    const handleFocus = () => {
-      if (!isUnmountedRef.current && !connectionStableRef.current) {
+    }, 2000) // Polling cada 2 segundos SIEMPRE
+    
+    // Listeners para eventos de ventana
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Polling inmediato cuando vuelve a ser visible
         setTimeout(() => {
           if (!isUnmountedRef.current) {
             pollMessages(true)
           }
-        }, 500)
+        }, 100)
       }
     }
 
+    const handleFocus = () => {
+      setTimeout(() => {
+        if (!isUnmountedRef.current) {
+          pollMessages(true)
+        }
+      }, 100)
+    }
+
     const handleOnline = () => {
-      if (!isUnmountedRef.current && connectionStatus === 'disconnected') {
+      if (!isUnmountedRef.current) {
         reconnectAttemptsRef.current = 0
-        setTimeout(setupChannel, 1000)
+        pollMessages(true)
+        setTimeout(setupChannel, 200)
       }
     }
 
@@ -520,7 +519,7 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
       window.removeEventListener('focus', handleFocus)
       window.removeEventListener('online', handleOnline)
     }
-  }, []) // Solo ejecutar una vez al montar
+  }, [])
 
   // Mostrar errores de voz
   useEffect(() => {
@@ -583,12 +582,12 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
         // Remover mensaje temporal en caso de error
         setMessages((prev) => prev.filter((msg) => msg.id !== tempId))
       } else {
-        // Hacer polling después de un delay para obtener el mensaje real
+        // Polling inmediato para obtener el mensaje real
         setTimeout(() => {
           if (!isUnmountedRef.current) {
             pollMessages(true)
           }
-        }, 1000)
+        }, 200) // Muy rápido
       }
     } catch (error) {
       console.error("Error sending message:", error)
@@ -667,7 +666,7 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
 
   return (
     <div className="flex flex-col h-full">
-      {/* Indicador de estado FIJO en la parte superior */}
+      {/* Indicador de estado FIJO en la parte superior - DISEÑO ORIGINAL */}
       <div className="flex-shrink-0 px-4 py-2 bg-background/80 backdrop-blur-sm border-b border-border/50">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -684,7 +683,7 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
             )}
           </div>
           
-          {/* Botón para ir al final solo si no está en auto-scroll */}
+          {/* Botón para ir al final solo si no está en auto-scroll - DISEÑO ORIGINAL */}
           {!shouldAutoScroll && (
             <Button
               variant="ghost"
@@ -701,7 +700,7 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
         </div>
       </div>
 
-      {/* Área de mensajes */}
+      {/* Área de mensajes - DISEÑO ORIGINAL */}
       <div 
         ref={messagesContainerRef}
         className={cn(
@@ -763,7 +762,7 @@ export function Chat({ roomId, currentUser, initialMessages, onNewMessage, isMob
         )}
       </div>
       
-      {/* Área de entrada de mensajes */}
+      {/* Área de entrada de mensajes - DISEÑO ORIGINAL */}
       <div className={cn(
         "relative p-4 border-t border-border bg-muted/20 flex flex-row items-center gap-2 flex-shrink-0",
         isMobile ? "p-3" : "p-4"
